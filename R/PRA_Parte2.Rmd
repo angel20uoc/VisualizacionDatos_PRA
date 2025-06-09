@@ -1,0 +1,246 @@
+---
+title: "PRA_Parte2"
+author: "Angel Jesus Saez Larrosa"
+date: "2025-06-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+# Cargar librerías
+library(tidyverse)
+library(lubridate)
+```
+Dataset escena1
+```{r}
+# Cargar librerías
+library(tidyverse)
+library(lubridate)
+
+# Leer el dataset
+df <- read_csv("energy_dataset.csv")
+
+# Convertir columna 'time' a tipo datetime
+df <- df %>%
+  mutate(time = ymd_hms(time, tz = "Europe/Madrid"))
+
+# Crear columnas de generación total y generación renovable
+df <- df %>%
+  mutate(
+    renewable_generation = rowSums(select(., 
+        `generation biomass`,
+        `generation geothermal`,
+        `generation hydro run-of-river and poundage`,
+        `generation hydro water reservoir`,
+        `generation solar`,
+        `generation wind onshore`,
+        `generation wind offshore`,
+        `generation other renewable`
+      ), na.rm = TRUE),
+    total_generation = rowSums(select(., starts_with("generation")), na.rm = TRUE),
+    renewable_pct = if_else(total_generation > 0,
+                            renewable_generation / total_generation * 100,
+                            NA_real_)  # Evita infinito
+  )
+
+# Crear resumen general
+summary_df <- tibble(
+  `Indicador` = c("Número total de registros", 
+                  "Fecha inicial", 
+                  "Fecha final", 
+                  "Precio medio previsto (€)", 
+                  "Precio medio real (€)", 
+                  "Demanda media total (MW)", 
+                  "Porcentaje medio renovable (%)"),
+  `Valor` = c(
+    nrow(df),
+    format(min(df$time, na.rm = TRUE), "%Y-%m-%d"),
+    format(max(df$time, na.rm = TRUE), "%Y-%m-%d"),
+    round(mean(df$`price day ahead`, na.rm = TRUE), 2),
+    round(mean(df$`price actual`, na.rm = TRUE), 2),
+    round(mean(df$`total load actual`, na.rm = TRUE), 0),
+    round(mean(df$renewable_pct, na.rm = TRUE), 1)  # Solo valores válidos
+  )
+)
+
+# Guardar CSV para Flourish
+write_csv(summary_df, "escena1_summary_energy_data_flourish.csv")
+
+
+```
+Dataset escena2
+```{r}
+# Leer el dataset
+df <- read_csv("energy_dataset.csv")
+
+# Convertir columna 'time' a fecha y extraer solo el día
+df <- df %>%
+  mutate(time = ymd_hms(time, tz = "Europe/Madrid"),
+         date = as.Date(time))
+
+# Calcular precio medio por día
+daily_prices <- df %>%
+  group_by(date) %>%
+  summarise(
+    price_day_ahead = mean(`price day ahead`, na.rm = TRUE),
+    price_actual = mean(`price actual`, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Guardar CSV listo para Flourish
+write_csv(daily_prices, "escena2_daily_price_comparison.csv")
+
+```
+Dataset escena3
+```{r}
+# Leer el dataset
+df <- read_csv("energy_dataset.csv")
+
+# Convertir columna de tiempo y extraer hora y día de la semana
+df <- df %>%
+  mutate(
+    time = ymd_hms(time, tz = "Europe/Madrid"),
+    hour = hour(time),
+    weekday = wday(time, label = TRUE, abbr = FALSE),  # Lunes, Martes, etc.
+    date = as.Date(time)
+  )
+
+# Calcular generación renovable y total
+df <- df %>%
+  mutate(
+    renewable_generation = rowSums(select(., 
+        `generation biomass`,
+        `generation geothermal`,
+        `generation hydro run-of-river and poundage`,
+        `generation hydro water reservoir`,
+        `generation solar`,
+        `generation wind onshore`,
+        `generation wind offshore`,
+        `generation other renewable`
+      ), na.rm = TRUE),
+    total_generation = rowSums(select(., starts_with("generation")), na.rm = TRUE),
+    renewable_pct = if_else(total_generation > 0,
+                            renewable_generation / total_generation * 100,
+                            NA_real_)
+  )
+
+# Crear dataset para Flourish (scatter plot)
+scatter_data <- df %>%
+  select(time, renewable_pct, `price actual`, `total load actual`, hour, weekday) %>%
+  rename(
+    datetime = time,
+    renewable_share = renewable_pct,
+    price = `price actual`,
+    demand = `total load actual`
+  ) %>%
+  drop_na(renewable_share, price, demand, weekday)  # Filtrar filas con NA
+
+# Guardar CSV para Flourish
+write_csv(scatter_data, "escena3_renewable_vs_price_scatter.csv")
+
+```
+Dataset escena4
+```{r}
+# Leer el dataset
+df <- read_csv("energy_dataset.csv")
+
+# Convertir la columna de tiempo y extraer día de la semana
+df <- df %>%
+  mutate(
+    time = ymd_hms(time, tz = "Europe/Madrid"),
+    weekday = wday(time, label = TRUE, abbr = FALSE)  # Lunes, Martes, etc.
+  )
+
+# Crear nueva columna con generación fósil agregada (suma de columnas fósiles)
+df <- df %>%
+  mutate(
+    fossil = rowSums(select(., starts_with("generation fossil")), na.rm = TRUE)
+  )
+
+# Agrupar por día de la semana y calcular media de generación por fuente
+weekly_generation_sources <- df %>%
+  group_by(weekday) %>%
+  summarise(
+    solar = mean(`generation solar`, na.rm = TRUE),
+    wind = mean(`generation wind onshore`, na.rm = TRUE) + mean(`generation wind offshore`, na.rm = TRUE),
+    hydro = mean(`generation hydro run-of-river and poundage`, na.rm = TRUE) +
+            mean(`generation hydro water reservoir`, na.rm = TRUE),
+    nuclear = mean(`generation nuclear`, na.rm = TRUE),
+    biomass = mean(`generation biomass`, na.rm = TRUE),
+    other_renewables = mean(`generation other renewable`, na.rm = TRUE),
+    fossil = mean(fossil, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Reordenar días de la semana manualmente para asegurar orden correcto
+ordered_levels <- c("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+weekly_generation_sources$weekday <- factor(weekly_generation_sources$weekday, levels = ordered_levels)
+
+# Guardar CSV para Flourish
+write_csv(weekly_generation_sources, "escena4_weekly_generation_area_chart.csv")
+
+```
+```{r}
+# Leer el dataset
+df <- read_csv("energy_dataset.csv")
+
+# Eliminar la zona horaria si la tiene y convertir la columna 'time' en fecha
+df <- df %>%
+  mutate(
+    time = str_remove(time, "\\+.*$"),     # eliminar +01:00 o similar
+    time = ymd_hms(time),
+    date = as.Date(time)
+  )
+
+# Calcular generación total y renovable
+df <- df %>%
+  mutate(
+    renewable = rowSums(select(., 
+      `generation biomass`,
+      `generation geothermal`,
+      `generation hydro run-of-river and poundage`,
+      `generation hydro water reservoir`,
+      `generation solar`,
+      `generation wind onshore`,
+      `generation wind offshore`,
+      `generation other renewable`
+    ), na.rm = TRUE),
+    total_generation = rowSums(select(., starts_with("generation")), na.rm = TRUE),
+    renewable_pct = if_else(total_generation > 0, renewable / total_generation * 100, NA_real_)
+  )
+
+# Agregación diaria
+daily_summary <- df %>%
+  group_by(date) %>%
+  summarise(
+    avg_price = mean(`price actual`, na.rm = TRUE),
+    avg_demand = mean(`total load actual`, na.rm = TRUE),
+    avg_renewable_pct = mean(renewable_pct, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Identificar días extremos
+top_day_renewable <- daily_summary %>% filter(avg_renewable_pct == max(avg_renewable_pct, na.rm = TRUE)) %>% mutate(tag = "Mayor % Renovables")
+low_day_renewable <- daily_summary %>% filter(avg_renewable_pct == min(avg_renewable_pct, na.rm = TRUE)) %>% mutate(tag = "Menor % Renovables")
+top_day_price <- daily_summary %>% filter(avg_price == max(avg_price, na.rm = TRUE)) %>% mutate(tag = "Precio más alto")
+top_day_demand <- daily_summary %>% filter(avg_demand == max(avg_demand, na.rm = TRUE)) %>% mutate(tag = "Mayor Demanda")
+
+# Unir y preparar para exportar
+extremes <- bind_rows(top_day_renewable, low_day_renewable, top_day_price, top_day_demand) %>%
+  select(tag, date, avg_price, avg_demand, avg_renewable_pct) %>%
+  rename(
+    Categoría = tag,
+    Fecha = date,
+    Precio_medio = avg_price,
+    Demanda_media = avg_demand,
+    Porcentaje_renovable = avg_renewable_pct
+  )
+
+# Guardar CSV
+write_csv(extremes, "escena5_dias_extremos_energia.csv")
+
+```
+
